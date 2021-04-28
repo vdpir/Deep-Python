@@ -18,18 +18,12 @@ def get_car_list(csv_filename):
                         row[0] == '' or row[1] == '' or row[3] == '' or row[5] == '':
                     continue
 
-                if row[0] == 'car':
-                    if row[2] == '':
-                        continue
-                    else:
+                if row[0] == 'car' and row[2] != '':
                         car_list.append(Car(row[1], row[3], row[5], row[2]))
                 elif row[0] == 'truck':
                     car_list.append(Truck(row[1], row[3], row[5], row[4]))
-                elif row[0] == 'spec_machine':
-                    if row[6] == '':
-                        continue
-                    else:
-                        car_list.append(SpecMachine(row[1], row[3], row[5], row[6]))
+                elif row[0] == 'spec_machine' and row[6] != '':
+                    car_list.append(SpecMachine(row[1], row[3], row[5], row[6]))
             except Exception:
                 continue
 
