@@ -1,59 +1,72 @@
-mport tempfile
-import os
-import time
-import socket
+import asyncio
 
-class ClientError(Exception):
-    """Exception raised for errors in the put.
-    """
-    pass
+storage = dict()
 
-class Client:
-    """Класс Client  реализует соединение с сервером метрик"""
+class ClientServerProtocol(asyncio.Protocol):
 
-    def __init__(self, server_ip, server_port, timeout = None):
-        self.sock = socket.create_connection((server_ip, server_port), timeout)
+    def process_data(self, data):
+        #"put {key} {value} {timestamp}
+        command, payload = data.split(" ", 1)
 
-
-    def get(self, metric):
-        if self.sock.sendall("get {}\\n".format(metric).encode("utf8")) != None:
-            raise ClientError()
-
-        data = self.sock.recv(1024)
-        response_str = data.decode("utf8")
-        list_lines = response_str.split('\\n')
-
-        if list_lines == "ok\\n\\n":
-            return dict()
-
-        if list_lines == "error\\nwrong command\\n\\n":
-            raise ClientError()
-
-        metric_dict = dict()
-
-        for line in list_lines:
-            metric_obs = line.split(' ')
-            metric_obs[0]
-
-            if metric_obs[0] in metric_dict:
-                metric_dict[metric_obs[0]].append((int(metric_obs[1]),float(metric_obs[2])))
+        if command == 'put':
+            return self.put_data(payload)
+        else:
+            if command == 'get':
+                return self.get_data(payload)
             else:
-                metric_dict[metric_obs[0]] = [(int(metric_obs[1]),float(metric_obs[2]))]
+                return self.unknown_command()
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def data_received(self, data):
+        resp = self.process_data(data.decode())
+        self.transport.write(resp.encode())
+
+    def put_data(self, payload):
+        try:
+            key, value, timestamp = payload.split(' ')
+
+            if key not in storage:
+                storage[key] = []
+            storage[key].append((float(value), int(timestamp)))
+        except Exception as err:
+            return 'error\nwrong command\n\n'
+
+        return 'ok\n\n'
+
+    def unknown_command(self):
+        return 'error\nwrong command\n\n'
+
+    def get_data(self, payload):
+        payload = payload.replace('\n','')
+        print(payload)
+        if payload  == "*":
+            print('ok\n' + '\n'.join([' '.join([key, tup]) for key, tup in storage]) + '\n')
+            return 'ok\n'+ '\n'.join([' '.join(key,tup) for key, tup in storage]) + '\n'
+
+        if payload not in storage:
+            return 'ok\n\n'
+
+        return  'ok\n'+ '\n'.join([' '.join([payload,tup]) for tup in storage[payload]]) + '\n'
 
 
-        # TODO sort dict
-        return metric_dict
+def run_server(host, port):
+    loop = asyncio.get_event_loop()
+    coro = loop.create_server(
+        ClientServerProtocol,
+        host, port
+    )
 
-    def put(self, metric, value, timestamp = None):
-        """put palm.cpu 23.7 1150864247\n"""
-        if (timestamp == None):
-            timestamp = int(time.time())
+    server = loop.run_until_complete(coro)
 
-        if (self.sock.sendall("put {} {} {}\\n".format(metric, value, timestamp).encode("utf8")) != None):
-            raise ClientError()
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
 
-        data = self.sock.recv(1024)
-        response_str = data.decode("utf8")
-        #if (response_str != 'ok\\n\\n')
-        #    raise ClientError()
+    server.close()
+    loop.run_until_complete(server.wait_closed())
+    loop.close()
 
+run_server('127.0.0.1', 8181)
