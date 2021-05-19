@@ -1,69 +1,102 @@
-import tempfile
-import os
-import time
-import socket
+import asyncio
 
-class ClientError(Exception):
-    """Exception raised for errors in the put.
-    """
-    pass
+storage = dict()
 
-class Client:
-    """Класс Client  реализует соединение с сервером метрик"""
+class ClientServerProtocol(asyncio.Protocol):
+    def process_data(self, data):
+        command, payload = data.split(" ", 1)
 
-    def __init__(self, server_ip, server_port, timeout = None):
-        self.sock = socket.create_connection((server_ip, server_port), timeout)
+        if command == 'put':
+            return self.put_data(payload)
+        else:
+            if command == 'get':
+                return self.get_data(payload)
+            else:
+                return self.unknown_command()
 
-    def send_data(self, send_string):
-        return self.sock.sendall(send_string.encode("utf8"))
+    def connection_made(self, transport):
+        self.transport = transport
 
-    def get_data(self):
-        return self.sock.recv(1024).decode("utf8")
+    def data_received(self, data):
+        resp = self.process_data(data.decode())
+        self.transport.write(resp.encode())
 
-    def get(self, metric):
-        if self.send_data("get {}\n".format(metric)) != None:
-            raise ClientError()
+    def put_data(self, payload):
 
-        response_str = self.get_data()
-
-        if response_str == "ok\n\n":
-            return dict()
-
-        if response_str == 'error\nwrong command\n\n':
-            raise ClientError()
-
-        list_lines = response_str.split('\n')
-        metric_dict = dict()
-
-        if list_lines[0] != 'ok':
-            raise ClientError()
+        if not self.is_put_payload_valid(payload):
+            return 'error\nwrong command\n\n'
 
         try:
-            for line in list_lines[1:]:
-                metric_obs = line.split(' ')
-                if metric_obs[0] == '':
-                    break
+            key, value, timestamp = payload.split(' ')
 
-                if metric_obs[0] in metric_dict:
-                    metric_dict[metric_obs[0]].append((int(metric_obs[2]),float(metric_obs[1])))
-                    metric_dict[metric_obs[0]] = list(sorted(metric_dict[metric_obs[0]], key=lambda item: item[0]))
-                else:
-                    metric_dict[metric_obs[0]] = [(int(metric_obs[2]), float(metric_obs[1]))]
-        except:
-            raise ClientError
+            if key not in storage:
+                storage[key] = []
 
-        return metric_dict
+            for idx, tup in enumerate(storage[key]):
+                if tup[1] == int(timestamp):
+                    storage[key][idx] = (float(value), int(timestamp))
+                    return 'ok\n\n'
 
-    def put(self, metric, value, timestamp = None):
-        """put palm.cpu 23.7 1150864247\n"""
-        if timestamp == None:
-            timestamp = int(time.time())
+            storage[key].append((float(value), int(timestamp)))
+            storage[key]=list(set(storage[key]))
 
-        if (self.send_data("put {} {} {}\n".format(metric, value, timestamp))) != None:
-            raise ClientError()
+        except Exception as err:
+            return 'error\nwrong command\n\n'
 
-        response_str = self.get_data()
+        return 'ok\n\n'
 
-        if response_str != 'ok\n\n':
-           raise ClientError()
+    def unknown_command(self):
+        return 'error\nwrong command\n\n'
 
+    def get_data(self, payload):
+        if not self.is_get_payload_valid(payload):
+            return 'error\nwrong command\n\n'
+        payload = payload.replace('\n','').replace('\r','')
+
+        if payload == "*":
+            return self.metric_to_string(storage)
+
+        if payload not in storage:
+            return 'ok\n\n'
+
+        return self.metric_to_string({payload : storage[payload]})
+
+    def metric_to_string(self, items):
+        result_str = []
+        for key, tup_l in items.items():
+            lst = [key + ' ' + ' '.join(map(str, list(tup))) for tup in tup_l]
+            result_str.extend(lst)
+        return 'ok\n\n' + '\n'.join(result_str) + '\n\n'
+
+    def is_put_payload_valid(self, payload):
+        payload_splits=payload.split()
+        if payload[:-2:-1] != '\n' or len(payload_splits) != 3:
+            return False
+        return True
+
+    def is_get_payload_valid(self, payload):
+        payload_splits = payload.split()
+        if payload[:-2:-1] != '\n' or len(payload_splits) != 1:
+            return False
+        return True
+
+
+def run_server(host, port):
+    loop = asyncio.get_event_loop()
+    coro = loop.create_server(
+        ClientServerProtocol,
+        host, port
+    )
+
+    server = loop.run_until_complete(coro)
+
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+
+    server.close()
+    loop.run_until_complete(server.wait_closed())
+    loop.close()
+
+run_server('127.0.0.1', 8181)
