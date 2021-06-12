@@ -4,7 +4,10 @@ storage = dict()
 
 class ClientServerProtocol(asyncio.Protocol):
     def process_data(self, data):
-        command, payload = data.split(" ", 1)
+        try:
+            command, payload = data.split(" ", 1)
+        except Exception:
+            return self.unknown_command()
 
         if command == 'put':
             return self.put_data(payload)
@@ -62,16 +65,28 @@ class ClientServerProtocol(asyncio.Protocol):
         return self.metric_to_string({payload : storage[payload]})
 
     def metric_to_string(self, items):
+        if len(storage) == 0:
+            return 'ok\n\n'
+
         result_str = []
         for key, tup_l in items.items():
-            lst = [key + ' ' + ' '.join(map(str, list(tup))) for tup in tup_l]
+            tup_l_sorted = sorted(tup_l, key=lambda x: x[1])
+            lst = [key + ' ' + ' '.join(map(str, list(tup))) for tup in tup_l_sorted]
             result_str.extend(lst)
-        return 'ok\n\n' + '\n'.join(result_str) + '\n\n'
+        return 'ok\n' + '\n'.join(result_str) + '\n\n'
 
     def is_put_payload_valid(self, payload):
         payload_splits=payload.split()
-        if payload[:-2:-1] != '\n' or len(payload_splits) != 3:
+        if payload[:-2:-1] != '\n' or len(payload_splits) != 3 or payload.count('\n') > 1:
             return False
+
+        try:
+            key, value, timestamp = payload.split(' ')
+            fl_val=float(value)
+            int_tsmp = int(timestamp)
+        except Exception:
+            return False
+
         return True
 
     def is_get_payload_valid(self, payload):
@@ -99,4 +114,4 @@ def run_server(host, port):
     loop.run_until_complete(server.wait_closed())
     loop.close()
 
-run_server('127.0.0.1', 8181)
+#run_server('127.0.0.1', 8181)
